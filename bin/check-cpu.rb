@@ -116,8 +116,8 @@ class CheckCPU < Sensu::Plugin::Check::CLI
       message msg
 
       return ok if checked_usage < config[:crit] && checked_usage < config[:warn]
-      return crit if occ == config[:occurence] && checked_usage >= config[:crit]
-      return warn if occ == config[:occurence] && checked_usage >= config[:warn]
+      return critical if occ == config[:occurence] && checked_usage >= config[:crit]
+      return warning if occ == config[:occurence] && checked_usage >= config[:warn]
     end
   end
 end
