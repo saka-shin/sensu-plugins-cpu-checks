@@ -54,6 +54,12 @@ class CheckCPU < Sensu::Plugin::Check::CLI
          proc: proc { |x| x.split(/,/).map { |y| y.strip.to_sym } },
          default: [:idle, :iowait, :steal, :guest, :guest_nice]
 
+  option :occurence,
+         short: '-o OCCURENCE',
+         description: 'Number of consecutive crit/warn',
+         proc: proc(&:to_i),
+         default: 1
+
   CPU_METRICS.each do |metric|
     option metric,
            long: "--#{metric}",
@@ -71,45 +77,47 @@ class CheckCPU < Sensu::Plugin::Check::CLI
   end
 
   def run
-    cpu_stats_before = acquire_cpu_stats
-    sleep config[:sleep]
-    cpu_stats_after = acquire_cpu_stats
+    (1..config[:occurence]).each do |occ|
+      cpu_stats_before = acquire_cpu_stats
+      sleep config[:sleep]
+      cpu_stats_after = acquire_cpu_stats
 
-    # Some kernels don't have 'guest' and 'guest_nice' values
-    metrics = CPU_METRICS.slice(0, cpu_stats_after.length)
+      # Some kernels don't have 'guest' and 'guest_nice' values
+      metrics = CPU_METRICS.slice(0, cpu_stats_after.length)
 
-    cpu_total_diff = 0.to_f
-    cpu_stats_diff = []
-    metrics.each_index do |i|
-      cpu_stats_diff[i] = cpu_stats_after[i] - cpu_stats_before[i]
-      cpu_total_diff += cpu_stats_diff[i]
-    end
-
-    cpu_stats = []
-    metrics.each_index do |i|
-      cpu_stats[i] = 100 * (cpu_stats_diff[i] / cpu_total_diff)
-    end
-
-    idle_diff = metrics.each_with_index.map { |metric, i| config[:idle_metrics].include?(metric) ? cpu_stats_diff[i] : 0.0 }.reduce(0.0, :+)
-
-    cpu_usage = 100 * (cpu_total_diff - idle_diff) / cpu_total_diff
-    checked_usage = cpu_usage
-
-    self.class.check_name 'CheckCPU TOTAL'
-    metrics.each do |metric|
-      if config[metric]
-        self.class.check_name "CheckCPU #{metric.to_s.upcase}"
-        checked_usage = cpu_stats[metrics.find_index(metric)]
+      cpu_total_diff = 0.to_f
+      cpu_stats_diff = []
+      metrics.each_index do |i|
+        cpu_stats_diff[i] = cpu_stats_after[i] - cpu_stats_before[i]
+        cpu_total_diff += cpu_stats_diff[i]
       end
+
+      cpu_stats = []
+      metrics.each_index do |i|
+        cpu_stats[i] = 100 * (cpu_stats_diff[i] / cpu_total_diff)
+      end
+
+      idle_diff = metrics.each_with_index.map { |metric, i| config[:idle_metrics].include?(metric) ? cpu_stats_diff[i] : 0.0 }.reduce(0.0, :+)
+
+      cpu_usage = 100 * (cpu_total_diff - idle_diff) / cpu_total_diff
+      checked_usage = cpu_usage
+
+      self.class.check_name 'CheckCPU TOTAL'
+      metrics.each do |metric|
+        if config[metric]
+          self.class.check_name "CheckCPU #{metric.to_s.upcase}"
+          checked_usage = cpu_stats[metrics.find_index(metric)]
+        end
+      end
+
+      msg = "total=#{(cpu_usage * 100).round / 100.0}"
+      cpu_stats.each_index { |i| msg += " #{metrics[i]}=#{(cpu_stats[i] * 100).round / 100.0}" }
+
+      message msg
+
+      return ok if checked_usage < config[:crit] && checked_usage < config[:warn]
+      return crit if occ == config[:occurence] && checked_usage >= config[:crit]
+      return warn if occ == config[:occurence] && checked_usage >= config[:warn]
     end
-
-    msg = "total=#{(cpu_usage * 100).round / 100.0}"
-    cpu_stats.each_index { |i| msg += " #{metrics[i]}=#{(cpu_stats[i] * 100).round / 100.0}" }
-
-    message msg
-
-    critical if checked_usage >= config[:crit]
-    warning if checked_usage >= config[:warn]
-    ok
   end
 end
